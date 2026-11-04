@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>DersBul Yönetim</title>
+<style>
+  :root { --p:#D63B22; --ink:#16181D; --ink2:#5B606B; --bg:#F6F7F9; --line:#E4E6EB; --warn:#FFF7E6; --danger:#C81E1E; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:12px 20px; display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  header b { color:var(--p); font-size:18px; }
+  nav button { background:none; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; font:inherit; color:var(--ink2); }
+  nav button.on { background:#FFF1EE; color:#B02E19; font-weight:600; }
+  main { padding:20px; max-width:1400px; margin:auto; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px; }
+  input, select, textarea { font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; }
+  button.b { background:var(--p); color:#fff; border:0; padding:8px 14px; border-radius:8px; cursor:pointer; font:inherit; }
+  button.g { background:#fff; color:var(--ink); border:1px solid var(--line); padding:6px 10px; border-radius:8px; cursor:pointer; font:inherit; }
+  button.d { background:var(--danger); color:#fff; border:0; padding:6px 10px; border-radius:8px; cursor:pointer; }
+  table { width:100%; border-collapse:collapse; background:#fff; }
+  th, td { text-align:left; padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--ink2); font-weight:600; position:sticky; top:0; background:#fff; }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:99px; font-size:12px; background:#F0F2F5; }
+  .pill.limited, .pill.adres_foto { background:var(--warn); color:#B45309; }
+  .pill.suspended, .pill.banned, .pill.guvenlik_tehlikesi { background:#FFEEEE; color:var(--danger); }
+  .msg { padding:6px 10px; border-radius:8px; background:#F0F2F5; margin:4px 0; white-space:pre-wrap; }
+  .msg.t { background:#FFF1EE; }
+  .muted { color:var(--ink2); }
+  #login { max-width:380px; margin:60px auto; }
+  #login input { width:100%; margin-bottom:10px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .hide { display:none; }
+</style>
+</head>
+<body>
+<div id="login" class="card">
+  <h2>DersBul Yönetim</h2>
+  <div id="step-pass">
+    <input id="em" type="email" placeholder="E-posta" autocomplete="username">
+    <input id="pw" type="password" placeholder="Şifre" autocomplete="current-password">
+    <div class="row"><button class="b" id="btn-login">Giriş</button><button class="g" id="btn-google">Google ile giriş</button></div>
+  </div>
+  <div id="step-mfa" class="hide">
+    <p id="mfa-info" class="muted"></p>
+    <img id="qr" alt="" style="max-width:200px">
+    <input id="code" inputmode="numeric" placeholder="6 haneli kod" maxlength="6">
+    <button class="b" id="btn-mfa">Doğrula</button>
+  </div>
+  <p id="login-err" style="color:var(--danger)"></p>
+</div>
+
+<div id="app" class="hide">
+  <header>
+    <b>DersBul Yönetim</b>
+    <nav id="tabs">
+      <button data-t="reports" class="on">Şikâyetler</button>
+      <button data-t="users">Kullanıcılar</button>
+      <button data-t="flags">İşaretli mesajlar</button>
+      <button data-t="docs">Belgeler</button>
+      <button data-t="log">İşlem kaydı</button>
+    </nav>
+    <span style="flex:1"></span>
+    <button class="g" id="btn-out">Çıkış</button>
+  </header>
+  <main id="main"></main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+// Yalnız anon anahtar. Yetki sunucuda: admins tablosu + 2 adımlı doğrulama (aal2). service_role burada YOK.
+const sb = supabase.createClient('https://iiqbonlilslsrpzaqedf.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpcWJvbmxpbHNsc3JwemFxZWRmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM1NDk3MzgsImV4cCI6MjEwOTEyNTczOH0.nao0nmj1SUbt3JZuoyPcwYPd5iOrHkP3D7Pw1tTcbXk');
+const $ = (id) => document.getElementById(id);
+// Kullanıcı içeriği HER ZAMAN textContent ile basılır (XSS yok).
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'onclick') e.onclick = v; else if (k === 'class') e.className = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k instanceof Node ? k : String(k));
+  return e;
+}
+const fmt = (d) => d ? new Date(d).toLocaleString('tr-TR') : '';
+const cats = { taciz:'Taciz', guvenlik_tehlikesi:'Tuzak / güvenlik', sahte_profil:'Sahte profil', platform_disi:'Dışarı çekme', dolandiricilik:'Dolandırıcılık', uygunsuz_icerik:'Uygunsuz içerik', diger:'Diğer' };
+const statuses = { active:'Aktif', limited:'Kısıtlı', suspended:'Askıda', banned:'Yasaklı' };
+let mfaFactor = null;
+
+function loginErr(m) { $('login-err').textContent = m || ''; }
+
+async function afterLogin() {
+  const { data: who, error } = await sb.rpc('admin_whoami');
+  if (error) return loginErr(error.message);
+  if (!who.admin) { await sb.auth.signOut(); return loginErr('Bu hesabın yönetici yetkisi yok.'); }
+  if (who.aal === 'aal2') return showApp();
+  // 2 adımlı doğrulama: kayıtlı TOTP varsa doğrula, yoksa kur
+  const { data: f } = await sb.auth.mfa.listFactors();
+  $('step-pass').classList.add('hide'); $('step-mfa').classList.remove('hide');
+  const totp = (f?.totp || []).find(x => x.status === 'verified');
+  if (totp) { mfaFactor = totp.id; $('mfa-info').textContent = 'Doğrulama uygulamandaki 6 haneli kodu yaz.'; $('qr').classList.add('hide'); }
+  else {
+    for (const x of f?.all || []) if (x.status !== 'verified') await sb.auth.mfa.unenroll({ factorId: x.id });
+    const { data, error } = await sb.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'DersBul Yönetim' });
+    if (error) return loginErr(error.message);
+    mfaFactor = data.id; $('qr').src = data.totp.qr_code;
+    $('mfa-info').textContent = 'İlk giriş: Google Authenticator / Microsoft Authenticator ile bu QR kodu okut, sonra çıkan kodu yaz.';
+  }
+}
+
+$('btn-login').onclick = async () => {
+  loginErr();
+  const { error } = await sb.auth.signInWithPassword({ email: $('em').value.trim(), password: $('pw').value });
+  if (error) return loginErr('Giriş başarısız: ' + error.message);
+  afterLogin();
+};
+$('btn-google').onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href.split('#')[0] } });
+$('btn-mfa').onclick = async () => {
+  loginErr();
+  const { data: ch, error: e1 } = await sb.auth.mfa.challenge({ factorId: mfaFactor });
+  if (e1) return loginErr(e1.message);
+  const { error } = await sb.auth.mfa.verify({ factorId: mfaFactor, challengeId: ch.id, code: $('code').value.trim() });
+  if (error) return loginErr('Kod hatalı.');
+  showApp();
+};
+$('btn-out').onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+function showApp() { $('login').classList.add('hide'); $('app').classList.remove('hide'); tab('reports'); }
+
+$('tabs').onclick = (e) => { if (e.target.dataset.t) tab(e.target.dataset.t); };
+function tab(t) {
+  for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.t === t);
+  ({ reports, users, flags, docs, log })[t]();
+}
+function render(...nodes) { $('main').replaceChildren(...nodes); }
+async function rpc(name, args) {
+  const { data, error } = await sb.rpc(name, args);
+  if (error) { alert('Hata: ' + error.message); throw error; }
+  return data;
+}
+
+async function setStatus(id, name) {
+  const s = prompt(`${name} için yeni durum: active / limited / suspended / banned`, 'suspended');
+  if (!s || !statuses[s]) return;
+  const note = prompt('Not (neden):', '') ?? '';
+  await rpc('admin_set_status', { target: id, new_status: s, note });
+}
+
+// ---------- Şikâyetler ----------
+async function reports(onlyOpen = true) {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const list = await rpc('admin_reports', { only_open: onlyOpen });
+  const head = el('div', { class: 'row', style: 'margin-bottom:12px' },
+    el('b', {}, `${list.length} şikâyet`),
+    el('button', { class: 'g', onclick: () => reports(!onlyOpen) }, onlyOpen ? 'Kapalıları da göster' : 'Sadece açıklar'));
+  render(head, ...list.map(r => {
+    const snap = r.target_snapshot || {};
+    const ev = (r.evidence || []).map(m => el('div', { class: 'msg' + (m.sender_id === r.target_user_id ? ' t' : '') },
+      el('span', { class: 'muted' }, (m.sender_id === r.target_user_id ? 'Şikâyet edilen' : 'Diğer taraf') + ' · ' + fmt(m.created_at) + '\n'), m.body));
+    return el('div', { class: 'card' },
+      el('div', { class: 'row' },
+        el('span', { class: 'pill ' + r.category }, cats[r.category] || r.category),
+        el('b', {}, r.target_name || snap.full_name || '(silinmiş hesap)'),
+        el('span', { class: 'muted' }, snap.email || ''),
+        r.target_status ? el('span', { class: 'pill ' + r.target_status }, statuses[r.target_status]) : null,
+        el('span', { class: 'muted' }, '· şikâyet eden: ' + (r.reporter_name || '(silinmiş)') + ' · ' + fmt(r.created_at)),
+        el('span', { class: 'pill' }, r.status)),
+      el('p', {}, r.reason),
+      ev.length ? el('details', {}, el('summary', {}, `Kanıt: son ${ev.length} mesaj`), ...ev) : null,
+      el('div', { class: 'row' },
+        r.target_user_id ? el('button', { class: 'd', onclick: async () => { await setStatus(r.target_user_id, r.target_name); reports(onlyOpen); } }, 'Hesap durumunu değiştir') : null,
+        r.status !== 'closed' ? el('button', { class: 'g', onclick: async () => { await rpc('admin_close_report', { report: r.id, note: prompt('Kapanış notu:', '') ?? '' }); reports(onlyOpen); } }, 'Şikâyeti kapat') : null));
+  }));
+}
+
+// ---------- Kullanıcılar ----------
+let lastUsers = [];
+async function users(q = '') {
+  const search = el('input', { placeholder: 'Ad, e-posta veya telefon ara', value: q, style: 'min-width:280px' });
+  search.onkeydown = (e) => { if (e.key === 'Enter') users(search.value.trim()); };
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  lastUsers = await rpc('admin_users', { q, lim: 1000, off: 0 });
+  const rows = lastUsers.map(u => el('tr', {},
+    el('td', {}, u.full_name), el('td', {}, u.email), el('td', {}, u.phone || '—'), el('td', {}, u.province || ''),
+    el('td', {}, u.is_tutor ? (u.published ? 'Eğitmen (yayında)' : 'Eğitmen') : 'Öğrenci'),
+    el('td', {}, el('span', { class: 'pill ' + u.status }, statuses[u.status])),
+    el('td', {}, String(u.report_count)), el('td', {}, String(u.flag_count)),
+    el('td', {}, fmt(u.created_at)), el('td', {}, fmt(u.last_sign_in_at)),
+    el('td', {}, el('button', { class: 'g', onclick: async () => { await setStatus(u.id, u.full_name); users(q); } }, 'Durum'))));
+  render(
+    el('div', { class: 'row', style: 'margin-bottom:12px' }, search,
+      el('button', { class: 'b', onclick: () => users(search.value.trim()) }, 'Ara'),
+      el('button', { class: 'g', onclick: exportCsv }, 'CSV indir (Excel)'),
+      el('span', { class: 'muted' }, `${lastUsers.length} kullanıcı`)),
+    el('div', { class: 'wrap' }, el('table', {},
+      el('tr', {}, ...['Ad soyad', 'E-posta', 'Telefon', 'İl', 'Rol', 'Durum', 'Şikâyet', 'İşaret', 'Kayıt', 'Son giriş', ''].map(h => el('th', {}, h))),
+      ...rows)));
+}
+function exportCsv() {
+  const cols = ['full_name', 'email', 'phone', 'province', 'is_tutor', 'published', 'status', 'report_count', 'created_at', 'last_sign_in_at'];
+  const esc = (v) => { const s = v == null ? '' : String(v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  // Excel TR için ; ayraç + BOM; formül enjeksiyonuna karşı =,+,-,@ ile başlayan hücrelere ' eklenir
+  const safe = (v) => { const s = esc(v); return /^[=+\-@]/.test(s) ? "'" + s : s; };
+  const csv = '﻿' + cols.join(';') + '\n' + lastUsers.map(u => cols.map(c => safe(u[c])).join(';')).join('\n');
+  const a = el('a', { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: `dersbul-kullanicilar-${new Date().toISOString().slice(0, 10)}.csv` });
+  a.click();
+}
+
+// ---------- İşaretli mesajlar ----------
+async function flags() {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const list = await rpc('admin_flags', { lim: 300 });
+  render(el('p', { class: 'muted' }, 'Otomatik tarama: iletişim bilgisi paylaşımı ve adres/fotoğraf istekleri. Aynı kişiden çok sayıda "adres_foto" kaydı tuzak işaretidir.'),
+    el('div', { class: 'wrap' }, el('table', {},
+      el('tr', {}, ...['Zaman', 'Tür', 'Kullanıcı', 'Metin', ''].map(h => el('th', {}, h))),
+      ...list.map(f => el('tr', {}, el('td', {}, fmt(f.created_at)), el('td', {}, el('span', { class: 'pill ' + f.kind }, f.kind)),
+        el('td', {}, f.user_name || '(silinmiş)'), el('td', { style: 'white-space:pre-wrap' }, f.excerpt),
+        el('td', {}, f.user_id ? el('button', { class: 'g', onclick: () => setStatus(f.user_id, f.user_name) }, 'Durum') : null))))));
+}
+
+// ---------- Belgeler ----------
+async function docs() {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const list = await rpc('admin_pending_documents');
+  const byTutor = {};
+  for (const d of list) (byTutor[d.tutor_id] ??= { name: d.tutor_name, docs: [] }).docs.push(d);
+  render(el('p', { class: 'muted' }, 'Belgeyi 5 dakikalık bağlantıyla aç, kimlikteki ad ile profil adını karşılaştır. Onaydan sonra kimlik görselini sil (KVKK: 30 gün).'),
+    ...(Object.keys(byTutor).length ? [] : [el('p', {}, 'Bekleyen belge yok.')]),
+    ...Object.entries(byTutor).map(([id, t]) => {
+      const chk = (k) => el('label', {}, el('input', { type: 'checkbox', id: `${k}-${id}` }), ' ' + k);
+      return el('div', { class: 'card' }, el('b', {}, t.name),
+        ...t.docs.map(d => el('div', { class: 'row' }, el('span', { class: 'pill' }, d.kind), el('span', { class: 'muted' }, fmt(d.created_at)),
+          el('button', { class: 'g', onclick: async () => {
+            const { data, error } = await sb.storage.from('documents').createSignedUrl(d.path, 300);
+            if (error) return alert(error.message); window.open(data.signedUrl, '_blank', 'noopener');
+          } }, 'Aç'))),
+        el('div', { class: 'row' }, chk('kimlik'), chk('diploma'), chk('emekli'),
+          el('button', { class: 'b', onclick: async () => {
+            await rpc('admin_verify_tutor', { target: id, identity: $(`kimlik-${id}`).checked, diploma: $(`diploma-${id}`).checked, retired: $(`emekli-${id}`).checked });
+            docs();
+          } }, 'Onayla')));
+    }));
+}
+
+// ---------- İşlem kaydı ----------
+async function log() {
+  const list = await rpc('admin_actions', { lim: 300 });
+  render(el('div', { class: 'wrap' }, el('table', {},
+    el('tr', {}, ...['Zaman', 'Yapan', 'Hedef', 'İşlem', 'Not'].map(h => el('th', {}, h))),
+    ...list.map(a => el('tr', {}, el('td', {}, fmt(a.created_at)), el('td', {}, a.actor_name || 'Sistem'),
+      el('td', {}, a.target_name || ''), el('td', {}, a.action), el('td', {}, a.note || ''))))));
+}
+
+sb.auth.getSession().then(({ data }) => { if (data.session) afterLogin(); });
+</script>
+</body>
+</html>
