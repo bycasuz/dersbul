@@ -62,6 +62,7 @@
       <button data-t="flags">İşaretli mesajlar</button>
       <button data-t="docs">Belgeler</button>
       <button data-t="edu">Eğitim</button>
+      <button data-t="fb">İstekler</button>
       <button data-t="log">İşlem kaydı</button>
     </nav>
     <span style="flex:1"></span>
@@ -133,7 +134,7 @@ function showApp() { $('login').classList.add('hide'); $('app').classList.remove
 $('tabs').onclick = (e) => { if (e.target.dataset.t) tab(e.target.dataset.t); };
 function tab(t) {
   for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.t === t);
-  ({ reports, users, chats, flags, docs, edu, log })[t]();
+  ({ reports, users, chats, flags, docs, edu, fb, log })[t]();
 }
 function render(...nodes) { $('main').replaceChildren(...nodes); }
 async function rpc(name, args) {
@@ -243,6 +244,35 @@ async function chat(c, q) {
       el('span', { class: 'muted' }, `${sideOf(m)} · ${m.sender_name || ''} · ${fmt(m.created_at)}`
         + (m.ttl_secs > 0 ? ' · ⏱ kaybolan' : '') + (m.read_at ? ' · görüldü' : '') + (m.flag ? ` · ⚠ ${m.flag}` : '') + '\n'),
       m.body)));
+}
+
+// ---------- İstek ve öneriler (015) ----------
+const fbKinds = { hata: 'Hata', oneri: 'Öneri', istek: 'Yeni özellik', icerik: 'Eksik içerik' };
+const fbStatus = { yeni: 'Alındı', inceleniyor: 'İnceleniyor', planlandi: 'Planlandı', yapildi: 'Yapıldı', reddedildi: 'Şimdilik yok' };
+async function fb(onlyOpen = true) {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const list = await rpc('admin_feedback', { only_open: onlyOpen, lim: 500 });
+  const count = (k) => list.filter(f => f.kind === k).length;
+  render(
+    el('div', { class: 'row', style: 'margin-bottom:12px' },
+      el('button', { class: onlyOpen ? 'b' : 'g', onclick: () => fb(true) }, 'Açık olanlar'),
+      el('button', { class: onlyOpen ? 'g' : 'b', onclick: () => fb(false) }, 'Tümü'),
+      el('span', { class: 'muted' }, `${list.length} kayıt · ` + Object.keys(fbKinds).map(k => `${fbKinds[k]}: ${count(k)}`).join(' · '))),
+    el('div', { class: 'wrap' }, el('table', {},
+      el('tr', {}, ...['Zaman', 'Tür', 'Kullanıcı', 'İstek', 'Sürüm', 'Durum', ''].map(h => el('th', {}, h))),
+      ...list.map(f => el('tr', {},
+        el('td', {}, fmt(f.created_at)), el('td', {}, fbKinds[f.kind] || f.kind), el('td', {}, f.user_name || '(silinmiş)'),
+        el('td', { style: 'white-space:pre-wrap;max-width:420px' }, f.body + (f.admin_note ? `
+— Yanıt: ${f.admin_note}` : '')),
+        el('td', {}, `${f.app_version || ''} ${f.platform || ''}`),
+        el('td', {}, fbStatus[f.status] || f.status),
+        el('td', {}, el('button', { class: 'g', onclick: async () => {
+          const s = prompt('Yeni durum: yeni / inceleniyor / planlandi / yapildi / reddedildi', f.status);
+          if (!s || !fbStatus[s]) return;
+          const note = prompt('Kullanıcıya görünecek kısa yanıt (boş bırakılabilir):', f.admin_note || '');
+          await rpc('admin_feedback_set', { fid: f.id, new_status: s, note: note || null });
+          fb(onlyOpen);
+        } }, 'Güncelle')))))));
 }
 
 // ---------- İşaretli mesajlar ----------
