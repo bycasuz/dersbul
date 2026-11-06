@@ -58,8 +58,10 @@
     <nav id="tabs">
       <button data-t="reports" class="on">Şikâyetler</button>
       <button data-t="users">Kullanıcılar</button>
+      <button data-t="chats">Sohbetler</button>
       <button data-t="flags">İşaretli mesajlar</button>
       <button data-t="docs">Belgeler</button>
+      <button data-t="edu">Eğitim</button>
       <button data-t="log">İşlem kaydı</button>
     </nav>
     <span style="flex:1"></span>
@@ -131,7 +133,7 @@ function showApp() { $('login').classList.add('hide'); $('app').classList.remove
 $('tabs').onclick = (e) => { if (e.target.dataset.t) tab(e.target.dataset.t); };
 function tab(t) {
   for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.t === t);
-  ({ reports, users, flags, docs, log })[t]();
+  ({ reports, users, chats, flags, docs, edu, log })[t]();
 }
 function render(...nodes) { $('main').replaceChildren(...nodes); }
 async function rpc(name, args) {
@@ -207,6 +209,42 @@ function exportCsv() {
   a.click();
 }
 
+// ---------- Sohbetler (tam erişim; her açılış işlem kaydına yazılır) ----------
+async function chats(q = '') {
+  const search = el('input', { placeholder: 'Öğrenci ya da eğitmen adı', value: q, style: 'min-width:260px' });
+  search.onkeydown = (e) => { if (e.key === 'Enter') chats(search.value.trim()); };
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const list = await rpc('admin_conversations', { q, lim: 500, off: 0 });
+  render(
+    el('div', { class: 'row', style: 'margin-bottom:12px' }, search,
+      el('button', { class: 'b', onclick: () => chats(search.value.trim()) }, 'Ara'),
+      el('span', { class: 'muted' }, `${list.length} sohbet · bir sohbeti açmak işlem kaydına yazılır`)),
+    el('div', { class: 'wrap' }, el('table', {},
+      el('tr', {}, ...['Son mesaj zamanı', 'Öğrenci', 'Eğitmen', 'Mesaj', 'İşaretli', 'Son mesaj', ''].map(h => el('th', {}, h))),
+      ...list.map(c => el('tr', {},
+        el('td', {}, fmt(c.last_at)), el('td', {}, c.student_name || '(silinmiş)'), el('td', {}, c.tutor_name || '(silinmiş)'),
+        el('td', {}, String(c.message_count)),
+        el('td', {}, c.flagged_count > 0 ? el('span', { class: 'pill adres_foto' }, String(c.flagged_count)) : '0'),
+        el('td', { style: 'max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, c.last_message || ''),
+        el('td', {}, el('button', { class: 'g', onclick: () => chat(c, q) }, 'Aç')))))));
+}
+async function chat(c, q) {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const msgs = await rpc('admin_messages', { conv: c.id });
+  const sideOf = (m) => m.sender_id === c.student_id ? 'Öğrenci' : m.sender_id === c.tutor_id ? 'Eğitmen' : 'Sistem/silinmiş';
+  render(
+    el('div', { class: 'row', style: 'margin-bottom:12px' },
+      el('button', { class: 'g', onclick: () => chats(q) }, '← Sohbetler'),
+      el('b', {}, `${c.student_name || '(silinmiş)'} ↔ ${c.tutor_name || '(silinmiş)'}`),
+      el('span', { class: 'muted' }, `${msgs.length} mesaj`),
+      c.student_id ? el('button', { class: 'd', onclick: () => setStatus(c.student_id, c.student_name) }, 'Öğrenci durumu') : null,
+      c.tutor_id ? el('button', { class: 'd', onclick: () => setStatus(c.tutor_id, c.tutor_name) }, 'Eğitmen durumu') : null),
+    ...msgs.map(m => el('div', { class: 'msg' + (m.sender_id === c.tutor_id ? ' t' : '') },
+      el('span', { class: 'muted' }, `${sideOf(m)} · ${m.sender_name || ''} · ${fmt(m.created_at)}`
+        + (m.ttl_secs > 0 ? ' · ⏱ kaybolan' : '') + (m.read_at ? ' · görüldü' : '') + (m.flag ? ` · ⚠ ${m.flag}` : '') + '\n'),
+      m.body)));
+}
+
 // ---------- İşaretli mesajlar ----------
 async function flags() {
   render(el('p', { class: 'muted' }, 'Yükleniyor…'));
@@ -234,13 +272,64 @@ async function docs() {
           el('button', { class: 'g', onclick: async () => {
             const { data, error } = await sb.storage.from('documents').createSignedUrl(d.path, 300);
             if (error) return alert(error.message); window.open(data.signedUrl, '_blank', 'noopener');
-          } }, 'Aç'))),
+          } }, 'Aç'),
+          el('button', { class: 'd', onclick: async () => {
+            const note = prompt('Ret gerekçesi (eğitmen görür):', 'Fotoğraf okunmuyor, net ve tam çekip tekrar yükle.');
+            if (!note) return; await rpc('admin_reject_document', { doc: d.id, note }); docs();
+          } }, 'Reddet'))),
         el('div', { class: 'row' }, chk('kimlik'), chk('diploma'), chk('emekli'),
           el('button', { class: 'b', onclick: async () => {
             await rpc('admin_verify_tutor', { target: id, identity: $(`kimlik-${id}`).checked, diploma: $(`diploma-${id}`).checked, retired: $(`emekli-${id}`).checked });
             docs();
           } }, 'Onayla')));
     }));
+}
+
+// ---------- Eğitim içerikleri (öğretmen onayı) ----------
+const eduStatus = { yok: 'İçerik yok', draft: 'Taslak', review: 'Onay bekliyor', published: 'Yayında' };
+async function edu() {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const list = await rpc('admin_edu_topics', { g: 8, subj: 'Matematik' });
+  const waiting = list.filter(t => t.status === 'review').length;
+  render(
+    el('p', { class: 'muted' }, `8. sınıf Matematik · ${list.length} kazanım · ${waiting} konu onay bekliyor. Yayınlamadan önce anlatımı ve her sorunun cevabını bir matematik öğretmenine kontrol ettir.`),
+    el('div', { class: 'wrap' }, el('table', {},
+      el('tr', {}, ...['Kod', 'Ünite', 'Kazanım', 'Durum', 'Soru', ''].map(h => el('th', {}, h))),
+      ...list.map(t => el('tr', {},
+        el('td', {}, t.code), el('td', {}, t.unit_title), el('td', { style: 'max-width:420px' }, t.outcome),
+        el('td', {}, el('span', { class: 'pill ' + (t.status === 'published' ? 'active' : t.status === 'review' ? 'limited' : '') }, eduStatus[t.status] || t.status)),
+        el('td', {}, `${t.published_questions}/${t.question_count}`),
+        el('td', {}, el('button', { class: 'g', onclick: () => eduTopic(t.topic_id) }, 'İncele')))))));
+}
+async function eduTopic(id) {
+  render(el('p', { class: 'muted' }, 'Yükleniyor…'));
+  const d = await rpc('admin_edu_topic', { tid: id });
+  const c = d.content || { lesson: '', summary: '', tips: '', status: 'yok' };
+  const area = (label, key) => { const t = el('textarea', { rows: 12, style: 'width:100%;font:14px/1.5 system-ui' }); t.value = c[key] || ''; return [el('h4', {}, label), t]; };
+  const [hL, tL] = area('Konu anlatımı', 'lesson'), [hS, tS] = area('Özet', 'summary'), [hT, tT] = area('Püf noktaları', 'tips');
+  render(
+    el('div', { class: 'row', style: 'margin-bottom:12px' },
+      el('button', { class: 'g', onclick: edu }, '← Liste'),
+      el('b', {}, d.topic.code), el('span', { class: 'pill' }, eduStatus[c.status] || c.status),
+      c.status === 'published'
+        ? el('button', { class: 'd', onclick: async () => { await rpc('admin_edu_publish', { tid: id, publish: false }); eduTopic(id); } }, 'Yayından kaldır')
+        : el('button', { class: 'b', onclick: async () => {
+            if (!confirm('Anlatım, özet, püf noktaları ve TÜM soruların cevapları kontrol edildi mi? Yayınlanınca öğrenciler görür.')) return;
+            await rpc('admin_edu_publish', { tid: id, publish: true }); eduTopic(id);
+          } }, 'Onayla ve yayınla')),
+    el('div', { class: 'card' }, el('b', {}, 'MEB kazanımı: '), d.topic.outcome, d.topic.note ? el('p', { class: 'muted' }, d.topic.note) : null),
+    hL, tL, hS, tS, hT, tT,
+    el('div', { class: 'row', style: 'margin:8px 0 20px' },
+      el('button', { class: 'b', onclick: async () => {
+        await rpc('admin_edu_save', { tid: id, p_lesson: tL.value, p_summary: tS.value, p_tips: tT.value });
+        alert('Kaydedildi. Değişen içerik yeniden onaya düştü.'); eduTopic(id);
+      } }, 'Metni kaydet')),
+    el('h4', {}, `Sorular (${d.questions.length})`),
+    ...d.questions.map((q, i) => el('div', { class: 'card' },
+      el('b', {}, `${i + 1}. `), q.stem,
+      ...q.choices.map((ch, k) => el('div', { style: k === q.answer ? 'color:var(--ok,#15803d);font-weight:700' : '' }, `${'ABCD'[k]}) ${ch}${k === q.answer ? '  ✓ doğru' : ''}`)),
+      el('p', { class: 'muted' }, 'Çözüm: ' + q.explanation),
+      el('button', { class: 'd', onclick: async () => { if (confirm('Soru silinsin mi?')) { await rpc('admin_edu_delete_question', { qid: q.id }); eduTopic(id); } } }, 'Soruyu sil'))));
 }
 
 // ---------- İşlem kaydı ----------
